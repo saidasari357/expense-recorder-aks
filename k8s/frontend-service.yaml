@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: expense-frontend
+spec:
+  selector:
+    app: expense-frontend
+    color: blue   # ACTIVE color
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer

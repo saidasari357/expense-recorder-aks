@@ -1,0 +1,80 @@
+name: Frontend CI/CD
+
+on:
+  push:
+    branches: [ "dev-frontend", "main" ]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/ci-cd-frontend.yml"
+
+jobs:
+  build-scan-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "IMAGE_NAME=${{ secrets.ACR_NAME }}.azurecr.io/expense-frontend" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: |
+          az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build frontend image
+        run: |
+          docker build -t ${{ steps.vars.outputs.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }} ./frontend
+
+      - name: Trivy scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.vars.outputs.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }}
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      - name: Push image to ACR
+        run: |
+          docker push ${{ steps.vars.outputs.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }}
+
+      - name: Set AKS context (only on main)
+        if: github.ref == 'refs/heads/main'
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ secrets.AKS_RG }}
+          cluster-name: ${{ secrets.AKS_NAME }}
+
+      - name: Blue-Green deploy frontend (only on main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -e
+
+          CURRENT_COLOR=$(kubectl get svc expense-frontend -o jsonpath='{.spec.selector.color}' || echo "blue")
+          if [ "$CURRENT_COLOR" = "blue" ]; then
+            NEW_COLOR="green"
+          else
+            NEW_COLOR="blue"
+          fi
+
+          echo "Current color: $CURRENT_COLOR, deploying: $NEW_COLOR"
+
+          # apply or update deployment
+          kubectl set image deployment/frontend-${NEW_COLOR} expense-frontend=${{ steps.vars.outputs.IMAGE_NAME }}:${{ steps.vars.outputs.IMAGE_TAG }} --record || \
+          kubectl apply -f k8s/frontend-deployment-${NEW_COLOR}.yaml
+
+          kubectl rollout status deployment/frontend-${NEW_COLOR} --timeout=120s
+
+          # switch service to new color
+          kubectl patch svc expense-frontend -p "{\"spec\": {\"selector\": {\"app\": \"expense-frontend\", \"color\": \"${NEW_COLOR}\"}}}"
+
+          # scale down old color
+          kubectl scale deployment frontend-${CURRENT_COLOR} --replicas=0 || true

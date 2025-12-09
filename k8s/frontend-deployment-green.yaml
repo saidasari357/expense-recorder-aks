@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-green
+  labels:
+    app: expense-frontend
+    color: green
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: expense-frontend
+      color: blue
+  template:
+    metadata:
+      labels:
+        app: expense-frontend
+        color: blue
+    spec:
+      containers:
+        - name: expense-frontend
+          image: expenseregistry123.azurecr.io/expense-frontend:v1
+          ports:
+            - containerPort: 80
+          env:
+            - name: BACKEND_URL
+              value: "http://expense-backend:4000"
