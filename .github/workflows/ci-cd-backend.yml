@@ -48,7 +48,7 @@ jobs:
 
       - name: Set AKS context (only on main)
         if: github.ref == 'refs/heads/main'
-        uses: azure/aks-set-context@v5
+        uses: azure/aks-set-context@v4
         with:
           resource-group: ${{ secrets.AKS_RG }}
           cluster-name: ${{ secrets.AKS_NAME }}
